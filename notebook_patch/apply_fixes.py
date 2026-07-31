@@ -320,6 +320,95 @@ def patch(notebook: dict) -> dict:
         what="compute_curvature call",
     )
 
+    # 4a. bulge borrows four names from the curvature module and defines none of
+    # them, so changing that module changes bulge silently. One of the three I
+    # touched crashed it outright (restored in curvature.py); the other two still
+    # change its numbers, so make the choice visible at the call site that
+    # depends on it rather than letting it be inherited.
+    i = find_cell(cells, "confcarti/thickness/bulge.py", what="bulge module")
+    # The neighbour cap is the sharpest of these. Curvature raised the shared
+    # default from 96 to 256 (a 3 mm ball at 0.5 mm resolution holds ~113, so 96
+    # was binding there), and bulge silently inherited it -- which moved its
+    # numbers a long way, because a wider sample changes which population the
+    # Tukey reweighting treats as inliers. Bulge now states its own cap, so the
+    # two modules cannot drag each other again.
+    replace_in_cell(
+        cells, i,
+        "    radius_mm: float = 8.0,\n"
+        "    min_neighbours: int = 12,\n"
+        "    robust_iterations: int = 3,\n"
+        "    tukey_c: float = 2.5,\n",
+        "    radius_mm: float = 8.0,\n"
+        "    min_neighbours: int = 12,\n"
+        "    robust_iterations: int = 3,\n"
+        "    tukey_c: float = 2.5,\n"
+        "    max_neighbours: int = 96,\n",
+        what="local_form_residual max_neighbours",
+    )
+    replace_in_cell(
+        cells, i,
+        "    index, mask = _radius_neighbourhoods(mesh, radius_mm)",
+        "    # Explicit, not inherited: see the note on max_neighbours above.\n"
+        "    index, mask = _radius_neighbourhoods(\n"
+        "        mesh, radius_mm, max_neighbours=max_neighbours\n"
+        "    )",
+        what="bulge neighbourhood cap",
+    )
+    replace_in_cell(
+        cells, i,
+        "    min_neighbours: int = 12,\n"
+        "    robust_iterations: int = 3,\n"
+        "    mask_boundary: bool = True,\n"
+        "    boundary_margin_scale: float = 0.5,\n",
+        "    min_neighbours: int = 12,\n"
+        "    robust_iterations: int = 3,\n"
+        "    max_neighbours: int = 96,\n"
+        "    mask_boundary: bool = True,\n"
+        "    boundary_margin_scale: float = 0.5,\n",
+        what="compute_bulge max_neighbours",
+    )
+    replace_in_cell(
+        cells, i,
+        "    deviation = local_form_residual(\n"
+        "        mesh,\n"
+        "        radius_mm=form_radius_mm,\n"
+        "        min_neighbours=min_neighbours,\n"
+        "        robust_iterations=robust_iterations,\n"
+        "    )",
+        "    deviation = local_form_residual(\n"
+        "        mesh,\n"
+        "        radius_mm=form_radius_mm,\n"
+        "        min_neighbours=min_neighbours,\n"
+        "        robust_iterations=robust_iterations,\n"
+        "        max_neighbours=max_neighbours,\n"
+        "    )",
+        what="compute_bulge passes the cap",
+    )
+    replace_in_cell(
+        cells, i,
+        "        zone = boundary_influence_zone(mesh, margin)",
+        "        # Geodesic, explicitly. The margin is 0.5 * form_radius = 6 mm at\n"
+        "        # the 12 mm default, and a Euclidean margin that wide reaches\n"
+        "        # around the trochlear groove and deletes interior plate -- the\n"
+        "        # same failure the curvature module's 6 mm rule had. This changes\n"
+        "        # the bulge field relative to the original run.\n"
+        "        zone = boundary_influence_zone(mesh, margin, metric=\"geodesic\")",
+        what="bulge boundary metric",
+    )
+    replace_in_cell(
+        cells, i,
+        "    smoothed = smooth_scalar_field(bci, thickness, smoothing_iterations)",
+        "    # preserve_nan, explicitly: thickness is NaN on denuded and undefined\n"
+        "    # vertices (a third of the plate in the original run). Filling those\n"
+        "    # from their neighbours lets thickness diffuse *across* a\n"
+        "    # full-thickness hole over 60 iterations, which is exactly what a hole\n"
+        "    # should not do. The returned residual is NaN there either way.\n"
+        "    smoothed = smooth_scalar_field(\n"
+        "        bci, thickness, smoothing_iterations, preserve_nan=True\n"
+        "    )",
+        what="bulge smoothing nan policy",
+    )
+
     # 4b. geometry validation: add the open-surface case. The existing checks are
     # all on a sphere or a plane -- closed or unbounded -- which is precisely why
     # a boundary rule that destroys open patches passed every one of them.
