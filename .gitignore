@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.venv/
+confcarti_results.csv
+confcarti_manifest.json
+table*.csv
