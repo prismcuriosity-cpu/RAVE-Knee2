@@ -7,13 +7,23 @@ dataset.
 **Start here: [`docs/RUNBOOK_OAIZIB.md`](docs/RUNBOOK_OAIZIB.md)** — what was
 wrong, what changed, and the step-by-step run procedure.
 
-## The two defects
+## The defects
 
 1. **The pipeline never touched the real data.** `USE_REAL_DATA` and
    `OAIZIB_ROOT` were declared and then ignored; the data cell always called
    `make_phantom_cohort`. Every reported number came from 32 analytic phantoms,
    while the run manifest recorded `"used_real_data": true` because it reported
    the flag rather than what the flag did.
+
+1b. **And it could not have found the files anyway.** OAIZIB-CM ships
+   `oaizib_001_0000.nii.gz` / `oaizib_001.nii.gz` — a sequential case number, not
+   the 7-digit OAI subject id. The loader's `(?:sub-)?(\d{7})` matches nothing,
+   falls back to the stem, and keys image and label differently, so
+   `discover_cases` raises *"507 image(s) have no matching label"* on a dataset
+   where every image has one. The bridge is the `CMT-ID` column of the shipped
+   subject tables; `confcarti/data/oaizib.py` makes and checks that join, and
+   reads the metadata locally instead of fetching a 481-row subset over the
+   network.
 
 2. **Curvature was discarded on 76–87 % of every surface.** `compute_curvature`
    NaN-ed every vertex within `2 * radius_mm` = **6.0 mm** of an open boundary,
@@ -28,16 +38,18 @@ wrong, what changed, and the step-by-step run procedure.
 | Path | |
 |---|---|
 | `confcarti/thickness/curvature.py` | corrected curvature module: per-vertex support test in place of the blanket margin, geodesic boundary distance, adaptive scale, coverage reported alongside every summary |
+| `confcarti/data/oaizib.py` | the OAIZIB-CM case-id join: subject tables, split manifests, and the checks that catch a release mismatch |
 | `tests/test_curvature_open_patch.py` | closed-form validation on **open** patches — the case the original suite never exercised |
+| `tests/test_oaizib_metadata.py` | the metadata join, its failure modes, and the split |
 | `notebook_patch/apply_fixes.py` | rewrites the notebook; fails loudly if an anchor is missing |
-| `notebook_patch/cell_config.py`, `cell_data_real.py` | replacement cells, readable on their own |
+| `notebook_patch/cell_config.py`, `cell_data_real.py`, `cell_splits.py` | replacement cells, readable on their own |
 | `ConfCarti_Full_Pipeline_fixed.ipynb` | the patched notebook, outputs cleared |
 | `docs/RUNBOOK_OAIZIB.md` | the full write-up and run procedure |
 
 ## Quick start
 
 ```bash
-python -m pytest tests/ -q                      # 11 passed
+python -m pytest tests/ -q                      # 30 passed
 
 python notebook_patch/apply_fixes.py \
     --notebook ConfCarti_Full_Pipeline.ipynb \
@@ -45,7 +57,13 @@ python notebook_patch/apply_fixes.py \
 ```
 
 Then set `OAIZIB_ROOT` in the notebook's configuration cell and run top to
-bottom — with `N_SUBJECTS = 8` first.
+bottom — with `N_SUBJECTS = 8` first. `OAIZIB_ROOT` must hold both the nnU-Net
+directories and the four shipped CSVs (`subInfo_train_1.csv`,
+`subInfo_test_1.csv`, `train.csv`, `test.csv`); the run needs no network access.
+
+On the 507-case release that yields **481 analysable subjects** (26 have no KL
+grade — the same 26 the public CartiMorph tables drop) split **288 / 95 / 98**,
+holding the dataset's own test set out whole.
 
 ## Curvature, before and after
 

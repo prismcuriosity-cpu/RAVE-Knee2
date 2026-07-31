@@ -20,6 +20,16 @@ What it changes, and why
    rather than what the flag did. Fixed by replacing the config and data cells,
    and by reporting the *effective* value in the manifest.
 
+1b. **And it could not have found the files anyway.** OAIZIB-CM ships
+   `imagesTr/oaizib_001_0000.nii.gz` + `labelsTr/oaizib_001.nii.gz`: a sequential
+   case number, not the 7-digit OAI subject id, plus nnU-Net's `_0000` suffix on
+   the image only. `discover_cases` parses `(?:sub-)?(\\d{7})`, matches nothing,
+   falls back to the stem, and then keys image and label differently -- raising
+   "507 image(s) have no matching label" on a dataset where every image has one.
+   A new `confcarti/data/oaizib.py` cell makes the real join, through the CMT-ID
+   column of the shipped subject tables, and reads the metadata locally instead
+   of fetching a 481-row subset over the network.
+
 2. **Curvature was discarded on 76-87% of every surface.** `compute_curvature`
    NaN-ed every vertex within `2 * radius_mm` = 6.0 mm of an open boundary,
    measured through space with a KD-tree. A cartilage plate is an open sheet
@@ -93,8 +103,19 @@ def replace_in_cell(cells, index: int, old: str, new: str, *, what: str) -> None
 # --------------------------------------------------------------------------- #
 
 CURVATURE_MODULE = (REPO / "confcarti" / "thickness" / "curvature.py").read_text()
+OAIZIB_MODULE = (REPO / "confcarti" / "data" / "oaizib.py").read_text()
 CONFIG_CELL = (HERE / "cell_config.py").read_text()
 DATA_CELL = (HERE / "cell_data_real.py").read_text()
+SPLITS_CELL = (HERE / "cell_splits.py").read_text()
+
+OAIZIB_HEADING = """### OAIZIB-CM on disk: case ids, subject tables and split manifests
+
+`confcarti/data/oaizib.py`
+
+New. The generic loader parses a 7-digit OAI subject id out of a filename;
+OAIZIB-CM names its files `oaizib_001_0000.nii.gz` with a sequential case number
+instead, so nothing joins. The `CMT-ID` column of the shipped subject tables is
+the bridge, and this module makes that join explicit and checks it."""
 
 MORPHOMETRY_LOOP = '''import time
 
@@ -228,11 +249,29 @@ def patch(notebook: dict) -> dict:
     i = find_cell(cells, "confcarti/thickness/curvature.py", what="curvature module")
     _set_source(cells[i], CURVATURE_MODULE)
 
-    # 2/3. config and data cells.
+    # 1b. New library cell: the OAIZIB-CM case-id join, inserted right after the
+    # metadata module it extends.
+    i = find_cell(cells, "def from_cartimorph_tables", what="metadata module")
+    cells.insert(i + 1, {
+        "cell_type": "markdown",
+        "metadata": {},
+        "source": OAIZIB_HEADING.splitlines(keepends=True),
+    })
+    cells.insert(i + 2, {
+        "cell_type": "code",
+        "metadata": {},
+        "execution_count": None,
+        "outputs": [],
+        "source": OAIZIB_MODULE.splitlines(keepends=True),
+    })
+
+    # 2/3. config, data and split cells.
     i = find_cell(cells, "USE_REAL_DATA = True", what="run configuration")
     _set_source(cells[i], CONFIG_CELL)
     i = find_cell(cells, "def fetch_oaizib_metadata", what="cohort metadata")
     _set_source(cells[i], DATA_CELL)
+    i = find_cell(cells, "# --- subject-level splits", what="split cell")
+    _set_source(cells[i], SPLITS_CELL)
 
     # 4. pipeline: thread the curvature parameters through analyse_knee.
     i = find_cell(cells, "def analyse_knee(", what="per-knee pipeline")
@@ -294,6 +333,20 @@ def patch(notebook: dict) -> dict:
 
     # 5. dataset wrapper must not materialise a lazy cohort.
     i = find_cell(cells, "class PhantomDataset(_BaseKneeDataset)", what="dataset module")
+    replace_in_cell(
+        cells, i,
+        '    match = _SUBJECT_PATTERN.search(stem)\n'
+        '    return match.group(1) if match else stem\n',
+        '    match = _SUBJECT_PATTERN.search(stem)\n'
+        '    if match:\n'
+        '        return match.group(1)\n'
+        '    # OAIZIB-CM names files by sequential case number, not by OAI subject id,\n'
+        '    # and puts nnU-Net\'s _0000 modality suffix on images but not on labels.\n'
+        '    # Without this branch an image keys as "oaizib_001_0000" and its label as\n'
+        '    # "oaizib_001", so discover_cases reports every image as unlabelled.\n'
+        '    return case_id_from_filename(stem)\n',
+        what="oaizib filename parsing",
+    )
     replace_in_cell(
         cells, i,
         "        self.knees = list(knees)\n",
@@ -402,8 +455,20 @@ def patch(notebook: dict) -> dict:
         '    "used_real_data": bool(USE_REAL_DATA_EFFECTIVE),\n'
         '    "curvature_radius_mm": CURVATURE_RADIUS_MM,\n'
         '    "curvature_min_radius_mm": CURVATURE_MIN_RADIUS_MM,\n'
-        '    "curvature_adaptive": bool(CURVATURE_ADAPTIVE),\n',
+        '    "curvature_adaptive": bool(CURVATURE_ADAPTIVE),\n'
+        '    "split_strategy": SPLIT_STRATEGY if USE_REAL_DATA_EFFECTIVE else "restratify",\n'
+        '    "n_dropped_missing_kl": (\n'
+        '        int(len(oaizib_tables.dropped_no_kl)) if oaizib_tables is not None else 0\n'
+        '    ),\n',
         what="manifest used_real_data",
+    )
+    replace_in_cell(
+        cells, i,
+        '    "fetched_real_metadata": real_metadata is not None,\n',
+        '    "metadata_source": (\n'
+        '        "OAIZIB-CM subInfo tables" if USE_REAL_DATA_EFFECTIVE else "phantom"\n'
+        '    ),\n',
+        what="manifest metadata source",
     )
 
     # 12. Drop every stored output. The saved outputs are the phantom run; leaving
