@@ -41,6 +41,8 @@ wrong, what changed, and the step-by-step run procedure.
 | `confcarti/data/oaizib.py` | the OAIZIB-CM case-id join: subject tables, split manifests, and the checks that catch a release mismatch |
 | `tests/test_curvature_open_patch.py` | closed-form validation on **open** patches — the case the original suite never exercised |
 | `tests/test_oaizib_metadata.py` | the metadata join, its failure modes, and the split |
+| `tests/test_curvature_bulge_contract.py` | the four curvature names `bulge.py` borrows — an interface nothing pinned |
+| `tests/test_notebook_bulge_cell.py` | curvature + bulge executed in one namespace, as the kernel runs them |
 | `notebook_patch/apply_fixes.py` | rewrites the notebook; fails loudly if an anchor is missing |
 | `notebook_patch/cell_config.py`, `cell_data_real.py`, `cell_splits.py` | replacement cells, readable on their own |
 | `ConfCarti_Full_Pipeline_fixed.ipynb` | the patched notebook, outputs cleared |
@@ -49,7 +51,7 @@ wrong, what changed, and the step-by-step run procedure.
 ## Quick start
 
 ```bash
-python -m pytest tests/ -q                      # 30 passed
+python -m pytest tests/ -q                      # 46 passed
 
 python notebook_patch/apply_fixes.py \
     --notebook ConfCarti_Full_Pipeline.ipynb \

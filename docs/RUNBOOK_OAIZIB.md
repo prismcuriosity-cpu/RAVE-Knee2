@@ -136,7 +136,55 @@ It also survived validation because every closed-form check in the notebook is
 on a **sphere or a plane**: closed or unbounded surfaces where the boundary rule
 never fires. The fixed notebook adds an open-patch check for exactly this reason.
 
-### 1.4 Smaller defects fixed along the way
+### 1.4 The bulge module borrows from the curvature module
+
+`bulge.py` uses four names from `curvature.py` and defines none of them:
+
+```python
+_radius_neighbourhoods(mesh, radius_mm)       # local_form_residual
+_tangent_frames(normals)                      # local_form_residual
+boundary_influence_zone(mesh, margin)         # compute_bulge
+smooth_scalar_field(bci, thickness, n)        # thickness_residual_bulge
+```
+
+In the notebook every module shares one global namespace, so those resolve to
+whatever the curvature cell defined. They are an interface, and nothing pinned
+them — so the curvature rewrite changed three of the four. One crashed the
+section-4 validation outright:
+
+```
+TypeError: _radius_neighbourhoods() missing 2 required positional
+           arguments: 'targets' and 'radius_mm'
+```
+
+The other two changed quietly, which is worse. All four are now pinned by
+`tests/test_curvature_bulge_contract.py` and
+`tests/test_notebook_bulge_cell.py`, the latter executing both cells in one
+namespace — the only test here that sees the modules the way the kernel does.
+
+**A caveat this turned up, which is not a bug I introduced.** The neighbour cap
+was the sharpest of the three changes: curvature raised the shared default from
+96 to 256 (a 3 mm ball at 0.5 mm holds ~113, so 96 was binding *there*), and
+bulge inherited it. On the section-4 fixture that moved recovered amplitude from
+0.31 of truth to 0.001 — a collapse, not a drift.
+
+The reason is worth knowing before you read any bulge number. The validation bump
+is **145 vertices wide** and a 12 mm form ball holds ~230, so the feature is
+nearly half the local sample. The Tukey biweight reweighting in
+`local_form_residual` assumes the feature is a *minority*; past ~50 % it flips,
+treats the sphere as the outlier population, fits the bump, and the residual goes
+to zero. The 96-point cap happened to keep proportionally more far-field points
+and held the fit on the sphere.
+
+So the recovered amplitude depends on a sampling parameter. Both modules now
+state the cap they were validated at, so they cannot drag each other again, and
+`test_robust_fit_breaks_down_on_a_wide_feature` pins the behaviour. But the
+underlying sensitivity is a property of the method, and if you report bulge
+amplitudes it belongs in your limitations. Setting `robust_iterations=0` removes
+the sensitivity (both caps then agree at ~0.30) at the cost of a non-robust fit —
+a methodological choice, so it is left as yours to make rather than changed here.
+
+### 1.5 Smaller defects fixed along the way
 
 - **Smoothing ran before masking.** Three diffusion passes spread the biased rim
   fits ~1.5 mm inward, and *then* the mask was applied — so the retained interior
@@ -159,6 +207,12 @@ never fires. The fixed notebook adds an open-patch check for exactly this reason
   against a published OAIZIB-CM number a comparison on a different test set.
 - **Risk control held every voxel.** ~2.5 M voxels x ~100 calibration knees as
   float64 is gigabytes.
+- **Bulge's boundary margin is now geodesic and its smoothing preserves NaN.**
+  Both inherited from the curvature module; both are the right behaviour for
+  bulge too (its margin is 6 mm at the default 12 mm form radius, wide enough to
+  reach around the trochlear groove; and thickness should not diffuse *across* a
+  full-thickness hole). Both are now passed explicitly at bulge's call sites
+  rather than inherited, and both move its numbers relative to the original run.
 
 ---
 

@@ -400,6 +400,49 @@ def _ring_neighbourhoods(
 
 
 def _radius_neighbourhoods(
+    mesh: trimesh.Trimesh, radius_mm: float, *, max_neighbours: int = 256
+) -> tuple[np.ndarray, np.ndarray]:
+    """Padded radius neighbourhoods for **every** vertex of a mesh.
+
+    This is a borrowed API, not a private helper: :mod:`confcarti.thickness.bulge`
+    calls it directly to build the neighbourhoods for its local form fit, and in
+    the notebook -- where every module shares one global namespace -- it resolves
+    to this definition. Its signature is therefore a contract, pinned by
+    ``tests/test_curvature_bulge_contract.py``. Changing it to the subset form the
+    adaptive-radius loop wanted broke ``compute_bulge`` with
+
+        TypeError: _radius_neighbourhoods() missing 2 required positional
+                   arguments: 'targets' and 'radius_mm'
+
+    Callers that need a subset want :func:`_ball_neighbourhoods`.
+
+    Parameters
+    ----------
+    mesh
+        Input mesh, vertices in mm.
+    radius_mm
+        Neighbourhood radius in millimetres.
+    max_neighbours
+        Cap on neighbours per vertex.
+
+    Returns
+    -------
+    tuple
+        ``(index, mask)``, both ``(n_vertices, max_k)``.
+    """
+    from scipy.spatial import cKDTree
+
+    vertices = np.asarray(mesh.vertices, dtype=np.float64)
+    return _ball_neighbourhoods(
+        vertices,
+        cKDTree(vertices),
+        np.arange(len(vertices)),
+        radius_mm,
+        max_neighbours=max_neighbours,
+    )
+
+
+def _ball_neighbourhoods(
     vertices: np.ndarray,
     tree: "object",
     targets: np.ndarray,
@@ -723,7 +766,7 @@ def quadric_curvature(
         in which case the support test and the adaptive fallback are skipped.
     radius_mm
         Nominal neighbourhood radius in millimetres. Strongly preferred on
-        marching-cubes surfaces -- see :func:`_radius_neighbourhoods`.
+        marching-cubes surfaces -- see :func:`_ball_neighbourhoods`.
     clip_mm_inv
         Symmetric clip on the principal curvatures.
     min_radius_mm
@@ -815,7 +858,7 @@ def quadric_curvature(
         # holds ~100 of them, which is gigabytes if fitted in one go.
         for start in range(0, pending.size, chunk_size):
             block = pending[start : start + chunk_size]
-            index, mask = _radius_neighbourhoods(
+            index, mask = _ball_neighbourhoods(
                 vertices, tree, block, radius, max_neighbours=max_neighbours
             )
             pk1, pk2, accepted, preason = _quadric_pass(
